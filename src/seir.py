@@ -38,10 +38,9 @@ class seir_base(torch.nn.Module):
         Return:
           -output: a seir feature, shape is (num_of_regions, 5, c)
         """
-        A = torch.unsqueeze(A, dim=0)*A_param
+        A = A.reshape(1, 1, 5, 5)*A_param
         x = torch.matmul(A, x)
-        output = self.state_fc(x.reshape(-1, x.shape[-1]))
-        output = output.reshape(x.shape)
+        output = self.state_fc(x)
         output = self.state_active(output) #TODO Do we need batch normalization?
         return output
 
@@ -58,7 +57,7 @@ class seir_model(torch.nn.Module):
         """
         super(seir_model, self).__init__()
         self.add_module('compute_adj', torch.nn.Sequential(
-                torch.nn.Linear(seir_channels[0]*5+adj_feature_channel, seir_channels[1], bias=True),
+                torch.nn.Linear(seir_channels[0]*5+adj_feature_channel, seir_channels[1], bias=False),
                 torch.nn.BatchNorm1d(seir_channels[1]),
                 torch.nn.ReLU(),
                 torch.nn.Linear(seir_channels[1], 5*5, bias=True),
@@ -77,8 +76,8 @@ class seir_model(torch.nn.Module):
           -output: a seir feature, shape is (num_of_regions, 5, c)
         """
         A_param = self.compute_adj(torch.cat([x.reshape(-1, x.shape[-1]*x.shape[-2]),
-                adj_feature], dim=-1))
-        A_param = A_param.reshape(-1, 5, 5)
+                adj_feature.reshape(-1, adj_feature.shape[-1])], dim=-1))
+        A_param = A_param.reshape(-1, x.shape[1], 5, 5)
         output = self.seir(A, A_param, x)
         return output
 
@@ -95,7 +94,8 @@ class regions_gcn(torch.nn.Module):
         torch.nn.init.kaiming_normal_(self.fc[3].weight)
 
     def forward(self, A, x):
-        x = torch.matmul(A, self.fc(x))
+        x = self.fc(x.reshape(-1, x.shape[2])).reshape(x.shape)
+        x = torch.matmul(A, x)
         return x
 
 class model(torch.nn.Module):
@@ -119,21 +119,23 @@ class model(torch.nn.Module):
                 torch.nn.BatchNorm1d(seir_channel*5*2),
                 torch.nn.ReLU(),
                 torch.nn.Linear(seir_channel*2*5, seir_channel*5, bias=True),
-                torch.nn.ReLU()))
+                torch.nn.Sigmoid()))
         torch.nn.init.kaiming_normal_(self.compute_seir[0].weight)
         torch.nn.init.kaiming_normal_(self.compute_seir[3].weight)
         self.add_module('compute_infection', torch.nn.Sequential(
                 torch.nn.Linear(init_channels[2]//5, 1),
-                torch.nn.ReLU()))
+                torch.nn.Sigmoid()))
         torch.nn.init.xavier_uniform_(self.compute_infection[0].weight)
         self.add_module('compute_density', torch.nn.Sequential(
-                torch.nn.Linear(init_channels[2], density_channel),
+                torch.nn.Linear(init_channels[2], density_channel, bias=False),
                 torch.nn.BatchNorm1d(density_channel),
                 torch.nn.ReLU(),
-                torch.nn.Linear(density_channel, 2)))
+                torch.nn.Linear(density_channel, 2),
+                torch.nn.Sigmoid()))
         torch.nn.init.kaiming_normal_(self.compute_density[0].weight)
         torch.nn.init.xavier_uniform_(self.compute_density[3].weight)
         self.add_module('mse_loss', torch.nn.MSELoss(reduce=False))
+        self.seir_channel = seir_channel
 
     def forward(self, A, A_regions, x, mean_density,
             label, num_steps, use_label=False, resume=False):
@@ -157,35 +159,41 @@ class model(torch.nn.Module):
         densitys = []
         mean_densitys = []
         infections = []
-        self.num_of_regions = A_regions.shape[-1]
+        num_of_regions = A_regions.shape[-1]
         if resume:
             seir_feature = x
         else:
-            seir_feature = self.compute_init_seir(x)
-            seir_feature = seir_feature.reshape(x.shape[0], 5, -1)
+            seir_feature = self.compute_init_seir(x.reshape(-1, x.shape[2]))
+            seir_feature = seir_feature.reshape(-1, x.shape[1], 
+                            5, self.seir_channel)
         for i in range(num_steps):
-            seir_feature = self.relate_regions(A_regions[i], 
-                    seir_feature.reshape(self.num_of_regions, -1))
-            seir_feature = seir_feature.reshape(self.num_of_regions, 5, -1)
+            seir_feature = self.relate_regions(A_regions[:, i], 
+                    seir_feature.reshape(-1, num_of_regions, self.seir_channel*5))
+            seir_feature = seir_feature.reshape(-1, num_of_regions, 
+                            5, self.seir_channel)
             seir_feature = self.seir(A, seir_feature, mean_density)
-            infection = self.compute_infection(seir_feature[:, self.I, :])
-            d = self.compute_density(seir_feature.reshape(self.num_of_regions, -1))
-            density, mean_density = d[:, 0:1], d[:, 1:2]
+            infection = self.compute_infection(seir_feature[:, :, self.I, :])
+            d = self.compute_density(seir_feature.reshape(-1, self.seir_channel*5))\
+                            .reshape(-1, num_of_regions, 2)
+            density, mean_density = d[:, :, 0:1], d[:, :, 1:2]
             if use_label:
-                seir_feature = torch.cat([seir_feature.reshape(self.num_of_regions, -1), 
-                        label[0][i], label[-1][i]], dim=-1)
+                seir_feature = torch.cat([
+                        seir_feature.reshape(-1, num_of_regions, self.seir_channel*5),
+                        label[0][:, i], label[-1][:, i]], dim=-1)
             else:
-                seir_feature = torch.cat([seir_feature.reshape(self.num_of_regions, -1), 
+                seir_feature = torch.cat([
+                        seir_feature.reshape(-1, num_of_regions, self.seir_channel*5), 
                         density, infection], dim=-1)
-            seir_feature = self.compute_seir(seir_feature)
-            infections.append(infection.unsqueeze(0))
-            mean_densitys.append(mean_density.unsqueeze(0))
-            densitys.append(density.unsqueeze(0))
+            seir_feature = self.compute_seir(seir_feature.reshape(-1, self.seir_channel*5+2))\
+                            .reshape(-1, seir_feature.shape[1], self.seir_channel*5)
+            infections.append(infection.unsqueeze(1))
+            mean_densitys.append(mean_density.unsqueeze(1))
+            densitys.append(density.unsqueeze(1))
             if use_label:
-                mean_density = label[1][i, :, :]
-        infections = torch.cat(infections, dim=0)
-        mean_densitys = torch.cat(mean_densitys, dim=0)
-        densitys = torch.cat(densitys, dim=0)
+                    mean_density = label[1][:, i, :, :]
+        infections = torch.cat(infections, dim=1)
+        mean_densitys = torch.cat(mean_densitys, dim=1)
+        densitys = torch.cat(densitys, dim=1)
         return (densitys, mean_densitys, infections), seir_feature
 
     def compute_loss(self, y, label, weight=torch.Tensor([[0.1], [0.1], [0.8]])):
@@ -200,6 +208,18 @@ class model(torch.nn.Module):
     def evaluate(self, y, label):
         e = torch.sqrt(torch.mean(torch.pow(torch.log((y+1)/(label+1)), 2)))
         return e
+
+def encode(model, A, A_regions, x, mean_density, label, num_steps):
+    y, seir_feature = model(A, A_regions, x, mean_density,
+                                label, num_steps, use_label=True,
+                                resume=False)
+    return y, seir_feature
+
+def decode(model, A, A_regions, x, mean_density, num_steps):
+    y, seir_feature = model(A, A_regions, x, mean_density,
+                                None, num_steps, use_label=False,
+                                resume=True)
+    return y, seir_feature
 
 if __name__ == "__main__":
     m = model([3, 36, 10], [2, 36], [10, 36, 10], 36)
