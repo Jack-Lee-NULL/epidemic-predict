@@ -103,20 +103,20 @@ class TestDataset:
             density = np.loadtxt(args.density_file, delimiter=',', comments='city', dtype=str)
             infection = np.loadtxt(args.infections_file, delimiter=',', dtype=str)
             self.A = torch.Tensor(np.loadtxt(args.seir_A_file, delimiter=','))
+            self.wan_data = torch.Tensor(np.loadtxt(os.path.join(args.wan_data_dir, 'city_all_norm.csv'), delimiter=',')[:, np.newaxis, :])
             self.transfer = []
             self.density = []
             self.mean_density = []
             self.infection = []
             self.A_regions = []
-            self.wan_data = []
             for c in citys:
                 pos = np.argwhere(density[:, 0]==c).flatten()
                 d = density[pos, 2:].astype('float32')
-                self.density.append(d[:, 0].reshape(-1, days).T[:, :, np.newaxis])
-                self.mean_density.append((d[:, 0]/d[:, -1]).reshape(-1, days).T[:, :, np.newaxis])
+                self.density.append(torch.Tensor(d[:, 0].reshape(-1, days).T[np.newaxis, :, :, np.newaxis]))
+                self.mean_density.append(torch.Tensor((d[:, 0]/d[:, -1]).reshape(-1, days).T[np.newaxis, :, :, np.newaxis]))
                 pos = np.argwhere(infection[:, 0]==c).flatten()
                 d = infection[pos, 1:].astype('float32')
-                self.infection.append(d[:, -1].reshape(-1, days).T[:, :, np.newaxis])
+                self.infection.append(torch.Tensor(d[:, -1].reshape(-1, days).T[np.newaxis, :, :, np.newaxis]))
                 transfer = np.loadtxt(os.path.join(args.migration_dir, c+'_migration.csv'), 
                                 delimiter=',')
                 num_of_regions = len(d)//days
@@ -124,43 +124,21 @@ class TestDataset:
                 for i in transfer:
                     j = (i[0]-21200500)%100+(i[0]-21200500)//100*31-1
                     adj[int(j), int(i[2]), int(i[1])] = i[-1]
-                self.A_regions.append(adj)
+                self.A_regions.append(torch.Tensor(adj[np.newaxis, :]))
                 adj = np.zeros((num_of_regions, num_of_regions))
                 transfer = np.loadtxt(os.path.join(args.migration_dir, 'tranfer_a_day_'+c+'.csv'), 
                                 delimiter=',')
                 for i in transfer:
                     adj[int(i[2]), int(i[1])] = i[-1]
-                self.transfer.append(adj)
-                transfer = np.loadtxt(os.path.join(args.wan_data_dir, 'city'+c+'.csv'), delimiter=',')
-                self.wan_data.append(transfer)
+                self.transfer.append(torch.Tensor(adj[np.newaxis, np.newaxis, :]))
 
-
-        else:
-            self.density = args[0]
-            self.mean_density = args[1]
-            self.infection = args[2]
-            self.A_regions = args[3]
-            self.A = args[4]
-
-    def split(self, n1, n2):
-        train_size = int(len(self.density)*n1/(n1+n2))
-        train_data = (self.density[:train_size], self.mean_density[:train_size],
-                        self.infection[:train_size], self.A_regions[:train_size], self.A)
-        validate_data = (self.density[train_size:], self.mean_density[train_size:],
-                        self.infection[train_size:], self.A_regions[train_size:], self.A)
-        return Dataset(train_data), Dataset(validate_data)
-
-    def data_expand(self, encode_least=10, decode_least=1):
-        density = []
-        for d in self.density:
-            time_l = d.shape[0]
 
     def __iter__(self):
         states = list(range(len(self.density)))
         for state in states:
-            yield torch.Tensor(self.density[state]), torch.Tensor(self.mean_density[state]),\
-                  torch.Tensor(self.infection[state]), torch.Tensor(self.A_regions[state]),\
-                  torch.Tensor(self.transfer[state]), torch.Tensor(self.wan_data[state])
+            yield self.density[state], self.mean_density[state],\
+                  self.infection[state], self.A_regions[state],\
+                  self.transfer[state]
             state = state + 1
 
     def __len__(self):
