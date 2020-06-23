@@ -41,19 +41,15 @@ def data_pre(loc_num):
     print(pre_mig)
     print(np.shape(pre_mig))
 
-    # 导入各地区的日新增感染病人数(尺寸为[4, 地区数*天数45])
-    inf = pd.read_csv("../data/infection_A.csv", header=None)
-    inf = np.array(inf.values.tolist())
-    inf = inf[inf[:, 1].argsort()]
 
-    '''# 导入各地区的人口密度
+    # 导入各地区的人口密度
     loc_pre = np.zeros((45*loc_num, 1))
-    loc = pd.read_csv("featureA_ljq.csv")
+    loc = pd.read_csv("./data/featureA_ljq.csv")
     loc = np.array(loc.values.tolist())
     loc = loc[loc[:, 4].argsort()]
     for i in range(45*loc_num):
         loc_pre[i] = round(float(loc[i, 2])/float(loc[i, 5]), 4)
-    print(loc)'''
+    print(loc)
 
     # 构建模型所需要的训练集和测试集
     dataset = np.zeros((45*loc_num, 4))
@@ -61,13 +57,13 @@ def data_pre(loc_num):
     y_train = []
     x_test = []
     y_test = []
-    # 构造标准数据集(维度[45*loc_num,7])
+    # 构造标准数据集(维度[45*loc_num,4])
     for j in range(loc_num):
         for i in range(45):
             dataset[i+j*45, 0] = norm(pre_mig[i, j*3])
             dataset[i+j*45, 1] = norm(pre_mig[i, 1+j*3])
             dataset[i+j*45, 2] = norm(pre_mig[i, 2+j*3])
-            dataset[i+j*45, 3] = norm(float(inf[i+j*45, 3]))
+            dataset[i+j*45, 3] = norm(float(loc[i+j*45, 3]))
     # 划分训练集和测试集(用前五天的数据预测后一天的数据)
     for i in range(loc_num):
         for k in range(6, 39):

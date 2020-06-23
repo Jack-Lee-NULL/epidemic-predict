@@ -20,7 +20,7 @@ def data_pre(loc_num):
     print(np.shape(data))
 
     # 导入地区间的迁移特征
-    migration = pd.read_csv("./data_pre/preprocess/A_migration.csv", header=None)
+    migration = pd.read_csv("./data/A_migration.csv", header=None)
     migration = np.array(migration.values.tolist())
     print(np.shape(migration))
     # 将迁移数据处理成每个地区的三维特征[内部流动、迁入、迁出]，维度为[日期，3*地区数]
@@ -41,16 +41,10 @@ def data_pre(loc_num):
     print(pre_mig)
     print(np.shape(pre_mig))
 
-    # 导入各地区的日新增感染病人数(尺寸为[4, 地区数*天数45])
-    inf = pd.read_csv("../train_data/city_A/infection_A.csv", header=None)
-    inf = np.array(inf.values.tolist())
-    inf = inf[inf[:, 1].argsort()]
-
     # 导入各地区的人口密度
     loc_pre = np.zeros((45*loc_num, 1))
-    loc = pd.read_csv("featureA_ljq.csv")
+    loc = pd.read_csv("./data/featureA_ljq.csv")
     loc = np.array(loc.values.tolist())
-    loc = loc[loc[:, 4].argsort()]
     for i in range(45*loc_num):
         loc_pre[i] = round(float(loc[i, 2])/float(loc[i, 5]), 4)
     print(loc)
@@ -70,7 +64,7 @@ def data_pre(loc_num):
             dataset[i+j*45, 3] = norm(pre_mig[i, 1+j*3])
             dataset[i+j*45, 4] = norm(pre_mig[i, 2+j*3])
             dataset[i+j*45, 5] = norm(loc_pre[i+j*45])
-            dataset[i+j*45, 6] = norm(float(inf[i+j*45, 3]))
+            dataset[i+j*45, 6] = norm(float(loc[i+j*45, 3]))
     # 划分训练集和测试集(用前五天的数据预测后一天的数据)
     for i in range(loc_num):
         for k in range(5, 35):
