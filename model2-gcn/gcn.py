@@ -110,19 +110,46 @@ class Net(torch.nn.Module):
         x, edge_index = data.x, data.edge_index
         x = F.relu(self.conv1(x, edge_index))
         x = F.log_softmax(self.conv2(x, edge_index), dim=1)
+        embedding = x
 
         x = torch.cat((x, x1), 1)
 
         x = self.lin1(x)
         x = self.act1(x)
 
-        return x
+        return x, embedding
+
+
+def train_net(data):
+    model.train()
+    data = data.to(device)
+    optimizer.zero_grad()
+    output, embedding = model(data)
+    label = data.y.to(device)
+    loss = crit(output, label)
+    loss.backward()
+    optimizer.step()
+
+    return loss, embedding
 
 
 if __name__ == '__main__':
+    # 这里需要设置训练集和测试集
+    # 训练集是用density有值的那部分
+    # 测试集用未知density的部分做
+    # 目的是获得未知的density，同时会提取网络的中间层embedding做特征
     data = dataset(data_onehot, data_density, data_edge)
     x1 = torch.tensor(data_infection, dtype=torch.float)  # 将每个区域的新增感染病人数作为补充的输入特征，尺寸是[城市的区域数*1]
-    model = Net()
+
+    device = torch.device('cuda')
+    embed_dim = 118  # 根据不同城市的地区数设置
+    model = Net().to(device)
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.005)
+    crit = torch.nn.BCELoss()  # 用交叉熵函数来计算损失
+    # 划分训练集
+    # 这里需要按照数据集大小设置循环 epoch 和 batch_size
+    loss, embedding = train_net(data)
+
 
 
 
