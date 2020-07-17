@@ -118,6 +118,7 @@ class Net(torch.nn.Module):
         x = self.act1(x)
 
         return x, embedding
+<<<<<<< HEAD
 
 
 def train_net(data):
@@ -134,6 +135,12 @@ def train_net(data):
 
 
 if __name__ == '__main__':
+=======
+
+
+if __name__ == '__main__':
+    
+>>>>>>> 766117c377ea02740919addc26fabc0fd32d9d43
     # 这里需要设置训练集和测试集
     # 训练集是用density有值的那部分
     # 测试集用未知density的部分做
