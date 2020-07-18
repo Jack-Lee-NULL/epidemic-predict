@@ -10,6 +10,7 @@ from torch_geometric.utils import remove_self_loops, add_self_loops
 from torch_geometric.nn import TopKPooling
 from torch_geometric.nn import global_mean_pool as gap, global_max_pool as gmp
 import torch.nn.functional as F
+from torch_geometric.nn import GCNConv
 
 
 def dataset(data_onehot, data_density, data_edge):
@@ -52,7 +53,6 @@ def train_net(data):
     :param data:
     :return:
     """
-    model.train()
     data = data.to(device)
     optimizer.zero_grad()
     output, embedding = model(data)
@@ -64,7 +64,7 @@ def train_net(data):
 
     return loss, embedding, model
 
-
+'''
 class GCNConv(MessagePassing):
     def __init__(self, in_channels, out_channels):
         super(GCNConv, self).__init__(aggr='add')  # "Add" aggregation.
@@ -136,6 +136,8 @@ class SAGEConv(MessagePassing):
 
         return new_embedding
 
+'''
+
 
 class Net(torch.nn.Module):
     def __init__(self):
@@ -176,6 +178,9 @@ if __name__ == '__main__':
     infection = pd.read_csv("./DATA/city_A/inf_rst.csv", header=None)
     infection = np.array(infection.values.tolist())
     infection = np.delete(infection, 0, axis=1)
+    for i in range(np.shape(infection)[0]-1):
+        for j in range(np.shape(infection)[1]):
+            infection[i+1, j] = norm(infection[i+1, j])
 
     edge = pd.read_csv("./DATA/tranfer_a_day_A.csv", header=None)
     edge = np.array(edge.values.tolist())
@@ -185,21 +190,22 @@ if __name__ == '__main__':
     one_hot = np.delete(one_hot, 0, axis=0)
     one_hot = np.delete(one_hot, 0, axis=1)
 
-    data_edge = edge[:, (1, 2)]  # 每天的数据是一致的
+    data_edge = np.transpose(edge[:, (1, 2)])  # 每天的数据是一致的
     data_onehot = one_hot[:118, :]  # 每一天的数据也是一致的
 
-    device = torch.device('cuda')
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     embed_dim = 118  # 根据不同城市的地区数设置
     model = Net().to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=0.005)
     crit = torch.nn.BCELoss()  # 用交叉熵函数来计算损失
+    model.train()
     # 划分训练集
     # 这里需要按照数据集大小设置循环 epoch 和 batch_size
     batch_size = 8
-    loss_all = 0
     epoch = 32
     loss_result = np.zeros((epoch, 1))
     for k in range(epoch):
+        loss_all = 0
         for i in range(batch_size):
             index = random.randint(0, np.shape(density)[1] - 1)
             data_density = density[1:, index]
@@ -217,6 +223,7 @@ if __name__ == '__main__':
 
     np.savetxt("./result/city_A_loss.csv", loss_result, delimiter=",")
 
+    model.eval()
     density_rst = np.zeros((embed_dim, np.shape(infection)[1]))
     embedding_rst = np.zeros((embed_dim, np.shape(infection)[1]*8))
     for i in range(np.shape(infection)[1]):
