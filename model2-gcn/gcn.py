@@ -1,4 +1,7 @@
 import torch
+import numpy as np
+import pandas as pd
+import random
 from torch_geometric.data import Data
 from torch_geometric.nn import MessagePassing
 from torch_geometric.utils import add_self_loops, degree
@@ -23,12 +26,32 @@ def dataset(data_onehot, data_density, data_edge):
     data = Data(x=x, y=y, edge_index=edge_index)
 
     return data
-	
-	
+
+
+def norm(x):
+    """
+    对部分特征进行log归一化处理
+    :param x: 需要归一化的输入特征
+    :return: 归一化后的数据
+    """
+    return (math.log(x+1) + 2) / 10
+
+
+def denorm(x):
+    """
+    对输出的日感染病人数进行恢复
+    :param x: 需要去归一化的输出特征
+    :return: 日感染病人数(整数)
+    """
+    return round(math.exp(x * 10 - 2))
+
+
 def train_net(data):
     """
-	trian the net
-	"""
+    训练整个网络模型
+    :param data:
+    :return:
+    """
     model.train()
     data = data.to(device)
     optimizer.zero_grad()
@@ -37,8 +60,9 @@ def train_net(data):
     loss = crit(output, label)
     loss.backward()
     optimizer.step()
+    loss = loss.item()
 
-    return loss, embedding
+    return loss, embedding, model
 
 
 class GCNConv(MessagePassing):
@@ -141,8 +165,28 @@ if __name__ == '__main__':
     # 训练集是用density有值的那部分
     # 测试集用未知density的部分做
     # 目的是获得未知的density，同时会提取网络的中间层embedding做特征
-    data = dataset(data_onehot, data_density, data_edge)
-    x1 = torch.tensor(data_infection, dtype=torch.float)  # 将每个区域的新增感染病人数作为补充的输入特征，尺寸是[城市的区域数*1]
+
+    density = pd.read_csv("./DATA/city_A/den_rst.csv", header=None)
+    density = np.array(density.values.tolist())
+    density = np.delete(density, 0, axis=1)
+    for i in range(np.shape(density)[0]-1):
+        for j in range(np.shape(density)[1]):
+            density[i+1, j] = norm(density[i+1, j])
+
+    infection = pd.read_csv("./DATA/city_A/inf_rst.csv", header=None)
+    infection = np.array(infection.values.tolist())
+    infection = np.delete(infection, 0, axis=1)
+
+    edge = pd.read_csv("./DATA/tranfer_a_day_A.csv", header=None)
+    edge = np.array(edge.values.tolist())
+
+    one_hot = pd.read_csv("./DATA/city_A/one_hot.csv", header=None)
+    one_hot = np.array(one_hot.values.tolist())
+    one_hot = np.delete(one_hot, 0, axis=0)
+    one_hot = np.delete(one_hot, 0, axis=1)
+
+    data_edge = edge[:, (1, 2)]  # 每天的数据是一致的
+    data_onehot = one_hot[:118, :]  # 每一天的数据也是一致的
 
     device = torch.device('cuda')
     embed_dim = 118  # 根据不同城市的地区数设置
@@ -151,9 +195,42 @@ if __name__ == '__main__':
     crit = torch.nn.BCELoss()  # 用交叉熵函数来计算损失
     # 划分训练集
     # 这里需要按照数据集大小设置循环 epoch 和 batch_size
-    loss, embedding = train_net(data)
+    batch_size = 8
+    loss_all = 0
+    epoch = 32
+    loss_result = np.zeros((epoch, 1))
+    for k in range(epoch):
+        for i in range(batch_size):
+            index = random.randint(0, np.shape(density)[1] - 1)
+            data_density = density[1:, index]
+            for j in range(np.shape(infection)[1]):
+                if density[0, index] == infection[0, j]:
+                    data_infection = infection[1:, index]
+            data = dataset(data_onehot, data_density, data_edge)
+            x1 = torch.tensor(data_infection, dtype=torch.float)  # 将每个区域的新增感染病人数作为补充的输入特征，尺寸是[城市的区域数*1]
+            loss, _, model = train_net(data)
+            loss_all += loss * embed_dim
 
+        loss = loss_all / batch_size
+        loss_result[k, 0] = loss
+        print('Epoch:', k, 'Loss:', loss)
 
+    np.savetxt("./result/city_A_loss.csv", loss_result, delimiter=",")
 
+    density_rst = np.zeros((embed_dim, np.shape(infection)[1]))
+    embedding_rst = np.zeros((embed_dim, np.shape(infection)[1]*8))
+    for i in range(np.shape(infection)[1]):
+        data_infection = infection[1:, i]
+        data_density = density[1:, 0]  # 该定义不存在实际意义
+        data = dataset(data_onehot, data_density, data_edge)
+        data = data.to(device)
+        output, embedding = model(data)
+        for j in range(8):
+            for k in range(embed_dim):
+                embedding_rst[k, j+i*8] = embedding[k, j]
 
+        for j in range(embed_dim):
+            density_rst[j, i] = output[j, i]
 
+    np.savetxt("./result/city_A_embedding.csv", embedding_rst, delimiter=",")
+    np.savetxt("./result/city_A_density.csv", density_rst, delimiter=",")
