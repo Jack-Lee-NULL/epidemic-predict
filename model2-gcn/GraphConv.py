@@ -4,33 +4,29 @@ from torch_geometric.utils import add_self_loops, degree
 
 
 class GraphConv(MessagePassing):
-    def __init__(self, in_channels, out_channels, aggr='add', bias=True,
-                 **kwargs):
-        super(GraphConv, self).__init__(aggr=aggr, **kwargs)
+    def __init__(self, in_channels, out_channels):
+        super(GraphConv, self).__init__(aggr='add')  # "Add" aggregation.
+        self.lin = torch.nn.Linear(in_channels, out_channels)
 
-        self.in_channels = in_channels
-        self.out_channels = out_channels
+    def forward(self, x, edge_index, edge_weight):
+        # x has shape [N, in_channels]
+        # edge_index has shape [2, E]
+        # Step 1: Add self-loops to the adjacency matrix.
+        # Step 2: Linearly transform node feature matrix.
+        x = self.lin(x)
+        # Step 3-5: Start propagating messages.
+        return self.propagate(edge_index, size=(x.size(0), x.size(0)), x=x, edge_weight=edge_weight)
 
-        self.weight = Parameter(torch.Tensor(in_channels, out_channels))
-        self.lin = torch.nn.Linear(in_channels, out_channels, bias=bias)
+    def message(self, x_j, edge_weight):
+        # x_j has shape [E, out_channels]
+        # Step 3: Normalize node features.
+        return edge_weight.view(-1, 1) * x_j
 
-        self.reset_parameters()
+    def update(self, aggr_out):
+        # aggr_out has shape [N, out_channels]
 
-    def reset_parameters(self):
-        uniform(self.in_channels, self.weight)
-        self.lin.reset_parameters()
-
-    def forward(self, x, edge_index, edge_weight, size=None):
-        """"""
-        h = torch.matmul(x, self.weight)
-        return self.propagate(edge_index, size=size, x=x, h=h,
-                              edge_weight=edge_weight)
-
-    def message(self, h_j, edge_weight):
-        return h_j if edge_weight is None else edge_weight.view(-1, 1) * h_j
-
-    def update(self, aggr_out, x):
-        return aggr_out + self.lin(x)
+        # Step 5: Return new node embeddings.
+        return aggr_out
 
     def __repr__(self):
         return '{}({}, {})'.format(self.__class__.__name__, self.in_channels,

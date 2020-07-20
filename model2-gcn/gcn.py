@@ -2,6 +2,7 @@ import torch
 import numpy as np
 import pandas as pd
 import random
+import math
 from torch_geometric.data import Data
 from torch_geometric.nn import MessagePassing
 from torch_geometric.utils import add_self_loops, degree
@@ -10,7 +11,7 @@ from torch_geometric.utils import remove_self_loops, add_self_loops
 from torch_geometric.nn import TopKPooling
 from torch_geometric.nn import global_mean_pool as gap, global_max_pool as gmp
 import torch.nn.functional as F
-import GraphConv
+from GraphConv import *
 
 
 def dataset(data_onehot, data_density, data_edge):
@@ -21,9 +22,12 @@ def dataset(data_onehot, data_density, data_edge):
     :param data_edge: 定义图结构的边信息
     :return: 整个网络的输入图结构信息
     """
-    x = torch.Tensor(data_onehot, dtype=torch.float)
-    y = torch.Tensor(data_density, dtype=torch.float)
-    edge_index = torch.Tensor(data_edge, dtype=torch.long)
+
+    x = torch.from_numpy(data_onehot)
+    data_density = data_density.astype(np.float32)
+    y = torch.from_numpy(data_density)
+    data_edge = data_edge.astype(np.long)
+    edge_index = torch.from_numpy(data_edge)
     data = Data(x=x, y=y, edge_index=edge_index)
 
     return data
@@ -69,15 +73,13 @@ class Net(torch.nn.Module):
     def __init__(self):
         super(Net, self).__init__()
 
-        self.conv1 = GraphConv(embed_dim, 32)
-        self.conv2 = GraphConv(32, 8)
+        self.conv1 = GraphConv(embed_dim, 8)
         self.lin1 = torch.nn.Linear(9, 1)
         self.act1 = torch.nn.ReLU()
 
     def forward(self, data, x1, edge_weight):
         x, edge_index = data.x, data.edge_index
         x = F.relu(self.conv1(x, edge_index, edge_weight))
-        x = F.log_softmax(self.conv2(x, edge_index, edge_weight), dim=1)
         embedding = x
 
         x = torch.cat((x, x1), 1)
@@ -99,32 +101,41 @@ if __name__ == '__main__':
     density = np.delete(density, 0, axis=1)
     for i in range(np.shape(density)[0]-1):
         for j in range(np.shape(density)[1]):
-            density[i+1, j] = norm(density[i+1, j])
+            density[i+1, j] = norm(float(density[i+1, j]))
+    density = density.astype(np.float32)
 
     infection = pd.read_csv("./DATA/city_A/inf_rst.csv", header=None)
     infection = np.array(infection.values.tolist())
     infection = np.delete(infection, 0, axis=1)
     for i in range(np.shape(infection)[0]-1):
         for j in range(np.shape(infection)[1]):
-            infection[i+1, j] = norm(infection[i+1, j])
+            infection[i+1, j] = norm(float(infection[i+1, j]))
+    infection = infection.astype(np.float32)
 
-    edge = pd.read_csv("./DATA/tranfer_a_day_A.csv")
+    edge = pd.read_csv("./DATA/tranfer_a_day_A.csv", header=None)
     edge = np.array(edge.values.tolist())
+    edge = np.delete(edge, 0, axis=0)
 
     one_hot = pd.read_csv("./DATA/city_A/one_hot.csv", header=None)
     one_hot = np.array(one_hot.values.tolist())
     one_hot = np.delete(one_hot, 0, axis=0)
     one_hot = np.delete(one_hot, 0, axis=1)
+    one_hot = one_hot.astype(np.float32)
 
     data_edge = np.transpose(edge[:, (1, 2)])  # 每天的数据是一致的
     for i in range(np.shape(data_edge)[1]):
         for j in range(2):
-            data_edge[j, i].strip("A_")
-    edge_weight = np.transpose(edge[:, 3])
-    edge_weight = torch.Tensor(edge_weight, dtype=torch.float)  # 每天的数据是一致的
+            data_edge[j, i] = data_edge[j, i].replace('A', '')
+            data_edge[j, i] = data_edge[j, i].replace('_', '')
+            data_edge[j, i] = int(data_edge[j, i])
 
-    for i in range(np.shape(edge_weight)[1]):
-        edge_weight[0, i] = norm(edge_weight[0, i])
+    edge_weight = np.transpose(edge[:, 3])
+    print(np.shape(edge_weight))
+    for i in range(np.shape(edge)[0]):
+        edge_weight[i] = norm(float(edge_weight[i]))
+
+    edge_weight = edge_weight.astype(np.float32)
+    edge_weight = torch.from_numpy(edge_weight)  # 每天的数据是一致的
 
     data_onehot = one_hot[:118, :]  # 每一天的数据也是一致的
 
@@ -148,7 +159,7 @@ if __name__ == '__main__':
                 if density[0, index] == infection[0, j]:
                     data_infection = infection[1:, index]
             data = dataset(data_onehot, data_density, data_edge)
-            x1 = torch.Tensor(data_infection, dtype=torch.float)  # 将每个区域的新增感染病人数作为补充的输入特征，尺寸是[城市的区域数*1]
+            x1 = torch.from_numpy(data_infection)  # 将每个区域的新增感染病人数作为补充的输入特征，尺寸是[城市的区域数*1]
 
             data = data.to(device)
             x1 = x1.to(device)
@@ -168,6 +179,7 @@ if __name__ == '__main__':
         print('Epoch:', k, 'Loss:', loss)
 
     np.savetxt("./result/city_A_loss.csv", loss_result, delimiter=",")
+    print('模型已经训练完毕')
 
     model.eval()
     density_rst = np.zeros((embed_dim, np.shape(infection)[1]))
